@@ -1,0 +1,257 @@
+
+# INSTALLATION DES PACKAGES
+
+install.packages(c(
+  "tidyverse",
+  "lubridate",
+  "terra",
+  "RColorBrewer",
+  "metR",
+  "mapdata",
+  "ISOweek"
+))
+
+
+# CHARGEMENT DES PACKAGES
+
+library(tidyverse)
+library(lubridate)
+library(terra)
+library(RColorBrewer)
+library(metR)
+library(mapdata)
+library(ISOweek)
+getwd()
+# 1. Charger le fichier .nc (03/08/2022)
+setwd("C:/Users/thinkpad/OneDrive/Documents/visualisation R")
+nc <- rast("italy_2022_08_03.nc")
+
+# moyenne sur les 24 heures (comme en Python)
+nc_daily <- mean(nc)
+
+# Convertir en data.frame
+df_map <- as.data.frame(nc_daily, xy = TRUE)
+colnames(df_map) <- c("longitude", "latitude", "t2m")
+
+# Convertir Kelvin en Celsius
+df_map$t2m_c <- df_map$t2m - 273.15
+
+# Palette RdBu_r
+pal <- rev(brewer.pal(11, "RdBu"))
+
+# vmin / vmax comme Python
+vmin <- min(df_map$t2m_c, na.rm = TRUE)
+vmax <- max(df_map$t2m_c, na.rm = TRUE)
+
+ggplot(df_map, aes(x = longitude, y = latitude)) +
+  geom_raster(aes(fill = t2m_c)) +
+  borders("world", colour = "black", size = 0.4) +
+  scale_fill_gradientn(
+    colours = pal,
+    limits = c(vmin, vmax),
+    name = "Temperature (°C)"
+  ) +
+  coord_quickmap(
+    xlim = c(9, 18.5),
+    ylim = c(37, 46),
+    expand = FALSE
+  ) +
+  scale_x_longitude(ticks = 1) +
+  scale_y_latitude(ticks = 1) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_line(color = "gray70", linetype = "dashed"),
+    panel.grid.minor = element_blank(),
+    axis.title = element_blank(),
+    legend.key.height = unit(1.2, "cm"),
+    plot.title = element_text(hjust = 0.5, size = 14)
+  ) +
+  labs(title = "Mean temperatures on 03.08.2022")
+# TASK 1.3 — Charger et visualiser les données de température
+
+# Charger le fichier
+df <- read_csv("C:/Users/thinkpad/OneDrive/Documents/visualisation R/italy_daily_2015_2024.csv")
+
+df <- df %>%
+  mutate(
+    date = as.Date(time),
+    year = year(date),
+    week = isoweek(date)
+  )
+
+# Calculer la moyenne hebdomadaire et la date moyenne de la semaine
+weekly_temp <- df %>%
+  group_by(year, week) %>%
+  summarise(
+    t2m = mean(t2m),
+    date = mean(date),
+    .groups = "drop"
+  )
+
+# Graphique 
+ggplot(weekly_temp, aes(x = date, y = t2m)) +
+  geom_line(color = "black", linewidth = 1.2) +
+  annotate("rect",
+           xmin = as.Date("2022-06-01"), xmax = as.Date("2022-08-31"),
+           ymin = -Inf, ymax = Inf,
+           alpha = 0.25, fill = "grey70") +
+  scale_y_continuous(
+    limits = c(5, 30),
+    breaks = seq(5, 25, 5)
+  ) +
+  labs(
+    title = "Weekly Mean Temperature in Italy (2015–2024)",
+    x = "Date",
+    y = "t2m"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.major = element_line(linetype = "solid", color = "grey70"),
+    panel.grid.minor = element_blank()
+  )
+# Graphique pour l'été 2022 en Italie
+
+# Charger le  fichier
+df <- read_csv("C:/Users/thinkpad/OneDrive/Documents/visualisation R/italy_daily_2015_2024.csv")
+
+df <- df %>%
+  mutate(
+    date = as.Date(time),
+    t2m_c = t2m
+  )
+
+# Filtrer l'été 2022
+summer_2022 <- df %>%
+  filter(date >= "2022-06-01", date <= "2022-08-31")
+
+# Graphique
+ggplot(summer_2022, aes(x = date, y = t2m_c)) +
+  geom_line(color = "black", linewidth = 1.2) +
+  labs(
+    title = "Daily Mean Temperature – Summer 2022 (Italy)",
+    x = "Date",
+    y = "Temperature (°C)"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.major = element_line(linetype = "solid", color = "grey80"),  # grille normale
+    panel.grid.minor = element_blank()
+  )
+
+# TASK 2.1 — Données de mortalité (World Mortality Dataset)
+
+# Télécharger le World Mortality Dataset
+wmd_url <- "https://raw.githubusercontent.com/akarlinsky/world_mortality/main/world_mortality.csv"
+mortality_raw <- read_csv(wmd_url)
+
+# Filtrer l'Italie
+mortality_italy <- mortality_raw %>%
+  filter(iso3c == "ITA") %>%
+  rename(deaths = deaths) %>%
+  select(year, time, deaths) %>%
+  rename(week = time)
+
+print(mortality_italy)
+
+# Créer une date
+mortality_italy <- mortality_italy %>%
+  mutate(date = make_date(year, 1, 1) + weeks(week - 1))
+
+# Visualisation mortalité brute
+ggplot(mortality_italy, aes(x = date, y = deaths)) +
+  geom_line() +
+  labs(title = "Italy: All-cause weekly mortality",
+       x = "Date", y = "Death count") +
+  theme_minimal()
+
+# TASK 3 — Modèle de mortalité en excès
+
+# Données d'entraînement : avant le 1er mars 2020
+train_data <- mortality_italy %>%
+  filter(date < as.Date("2020-03-01"))
+
+# Modèle : effet linéaire de l'année + effets fixes de la semaine
+model <- lm(deaths ~ year + factor(week), data = train_data)
+summary(model)
+
+# Données été 2022 (juin, juillet, août)
+summer_2022 <- mortality_italy %>%
+  filter(year == 2022, week >= 22, week <= 35)
+
+# Prédiction
+summer_2022 <- summer_2022 %>%
+  mutate(predicted = predict(model, newdata = .),
+         excess_deaths = deaths - predicted)
+
+# Visualisation : mortalité en excès été 2022
+ggplot(summer_2022, aes(x = date, y = excess_deaths)) +
+  geom_line(color = "red") +
+  labs(title = "Italy : Excess deaths",
+       x = "date", y = "death count") +
+  theme_minimal()
+
+# Total des morts en excès
+total_excess <- sum(summer_2022$excess_deaths, na.rm = TRUE)
+
+cat("## Total number of excess deaths in Italy in summer of 2022:", round(total_excess, 2), "\n")
+#TASK 4 — Bin scatter plot : mortalité ~ température
+install.packages("binsreg")
+library(binsreg)
+
+# 1. Températures quotidiennes → hebdomadaires
+
+temp <- read_csv("C:/Users/thinkpad/OneDrive/Documents/visualisation R/italy_daily_2015_2024.csv")
+
+temp <- temp %>%
+  mutate(
+    date = as.Date(time),
+    year = year(date),
+    week = week(date),
+    t2m = t2m
+  )
+
+temp_weekly <- temp %>%
+  group_by(year, week) %>%
+  summarise(t2m = mean(t2m), .groups = "drop")
+
+# 2. Fusion mortalité + température
+
+
+merged_data <- mortality_italy %>%
+  inner_join(temp_weekly, by = c("year", "week"))
+
+# Vérification
+print(head(merged_data))
+
+# 3. Bin-scatter 
+
+merged_data <- merged_data %>%
+  mutate(
+    t2m_bin = cut(t2m, breaks = seq(5, 30, by = 2.5), include.lowest = TRUE)
+  )
+
+bin_stats <- merged_data %>%
+  group_by(t2m_bin) %>%
+  summarise(mean_deaths = mean(deaths), .groups = "drop")
+
+ggplot(bin_stats, aes(x = t2m_bin, y = mean_deaths)) +
+  geom_point(size = 3, color = "black") +
+  geom_line(group = 1, color = "black") +
+  labs(
+    title = "Mortality vs Temperature (Bin-Scatter)",
+    x = "Temperature bins (°C)",
+    y = "Mean weekly deaths"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# 4. Bin-scatter avec binsreg()
+
+est2 <- binsreg(
+  y = merged_data$deaths,
+  x = merged_data$t2m,
+  nbins = 10,
+  line = c(1, 0)
+)
+
+
